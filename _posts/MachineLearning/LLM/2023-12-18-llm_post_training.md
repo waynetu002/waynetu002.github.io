@@ -8,7 +8,18 @@ keywords: llm rhlf
 
 ---
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=default"></script>
+<script>
+  MathJax = {
+    tex: {
+      inlineMath: [['$', '$']], // 支持 $和$$ 作为行内公式分隔符
+      displayMath: [['$$', '$$']], // 块级公式分隔符
+    },
+    svg: {
+      fontCache: 'global'
+    }
+  };
+</script>
+<script async src="/public/js/mathjax/es5/tex-mml-chtml.js"></script>
 
 * TOC
 {:toc}
@@ -36,43 +47,7 @@ keywords: llm rhlf
 3. 老板准备1个月后开发布会，能用的资源是100张A100，那应该用多少数据训一个多大模型最终效果最好？
 4. 老板对现在10B的模型不满意，想知道扩大到100B模型的效果能提升到多少？
 
-## RLHF流程
 
-RLHF的基本思想是将人类价值观和偏好纳入AI系统的学习过程中。仅仅让LLM预测下一个单词是不够的——它需要生成有用、安全、真实且符合人类意图的回答。但"有用性"和"有帮助性"等概念很难用传统的数学目标函数来表达。RLHF提供了一种方法，让AI可以从人类对其输出的评价中直接学习这些复杂的价值观。
-
-![](/public/upload/machine/rlhf_workflow.jpg)
-
-[图解大模型RLHF系列之：人人都能看懂的PPO原理与源码解读](https://mp.weixin.qq.com/s/mhPJzhQvPJlAWsO2nW9BHg)
-
-[RLHF——让大模型对齐人类偏好](https://mp.weixin.qq.com/s/UGLifcfq9SmjARYk9D3kDQ)预训练主要针对补全能力，但不一定是“有用”的补全。RLHF优化模型所涉及的三个步骤，sft ==> RM ==> RL
-1. 指令微调（SFT）：模型会模仿其训练数据，使用精选的人类回答数据集来微调预训练的大语言模型以应对各种查询。**这让模型获得了优异的指令理解和意图识别能力**，模型的输出也更符合人类的期待，胜过通用文本生成模型，**弥补了 LLMs预测下一个单词目标与用户遵循指令目标之间的差距**，指令的作用是约束模型的输出，使其符合预期的响应特征或领域知识，为人类干预模型的行为提供一个通道。PS： chat 模型就是SFT 过的模型
-    1. 指令微调SFT（Supervised fine-tuning）的数据集是问答对，即（prompt，answer）对，prompt我们可以理解为指令或问题，answer就是针对该指令或问题的高质量答案。SFT就是在预训练模型基础上利用这些人工标注的数据进一步微调
-    2. IFT可以算作SFT的一个子集，或者说先驱步骤，IFT的主要目的是让模型适应并听从人类的指令，比如当指令prompt出现"summarize"时，模型就应该知道现在的任务是总结任务。经过IFT之后，模型学会了听从指令，但是其生成的内容却不一定安全可靠。所以为了提升大模型的帮助性、降低有害性，人们会继续做SFT，通过高质量的数据给模型展示无害的、有帮助性的回答，规训模型的生成内容。
-2. 奖励模型训练(RW)：由于人的反馈需要思考，是非常慢的，肯定跟不上fine-tune 中网络的训练，我们不能让人类对模型的所有输出进行ranking。所以chatgpt 设计了一个reward predictor 模块，通过学习人类的历史行为来预估人的feedback。使用一个包含人类对同一查询的多个答案打分的数据集训练一个奖励模型。或者说，就是一个打分模型，标注者对大量的SFT模型输出进行投票，哪个更好，哪个更差，由此创建了一个由比较数据组成的新数据集。相比监督微调，这种方法的优势在于不需要标注者编写回答，只需要为模型生成的几个回答打分，**大幅提高了标注效率**。
-    1. RM 模型的数据构造是对 LLM 模型输入同一个提示采样多个不同输出，生成多个 pair 对。之后人类专家会对这些 pair 对进行质量排序，生成数据集，，然后提供给模型进行 pair-loss 偏好训练。其中query表示提示信息或者说指令信息，chosen为标注后排序分数较高的答案，即针对提示选择的答案；rejected为标注后排序分数较低的答案，即针对提示拒绝的答案。
-        ```json
-        {
-            "query": "联合国总部在哪里？",
-            "chosen": "联合国总部大楼位于纽约曼哈顿东侧，属于xxx",
-            "rejected": "联合国的15个专门机构都没有设在总部，然而，xx"
-        }
-        ```
-    2. 训练RM是一个排序任务，不是直接对文本标注分数来训练奖励模型，**因为不同的研究人员对同一个句子可能有不一样的评分，这样会导致大量的噪声出现，如果改成排序，则会大大降低噪声**。不同的排名结果将被归一化为用于训练的标量奖励值。针对query，输入chosen和rejected答案，训练目标尽可能的使得chosen答案和rejected答案的差值更大。
-    2. 奖励模型可以利用预训练模型进行初始化，或者也可以进行随机初始化。训练奖励模型的基本目标是获得一个模型，该模型接收一系列的文本，之后返回每个文本对应的标量奖励，该奖励会在数字值的大小上代表人类偏好，越大表示越接近人类偏好，越小表示越脱离人类偏好。
-    3. 对于rm模型来说，采用sft模型进行参数初始化，将原来的lm输出层替换成一个线性全连接层，在接受提示和响应作为输入后，输出一个标量奖励值。在训练过程中，采用pair-wise方法进行模型训练，即对于同一个提示内容x来说，比较两个不同的回答$y_w$和$y_l$之间的差异，假设$y_w$在真实情况下好于$y_l$，那么希望$x+y_w$经过模型后的分数比$x+y_l$经过模型后的分数高，反之亦然。
-3. RLHF 训练/rlhf-ppo：人类反馈强化学习/近端策略优化算法（PPO），根据 RW 模型的奖励反馈进一步微调模型**以最大化reward model的score**。
-    1. 设计对齐模型的优化目标：这个优化目标不仅考虑到奖励模型的得分，也尽量让对齐模型参数更新后输出的分布不要偏移sft模型太远，防止模型越训越差。
-    2. 我们让**对齐模型**根据prompt自生成回答，并采用训练好的奖励模型对回答进行打分，对齐模型会根据评分结果不断调整自己的输出分布。
-
-总结一下**RLHF=rm+ppo**：我们通过比较容易获得的公开无标签数据，来训练一个大语言模型/预训练模型，然后，通过人工编写的问答对，来生成高质量的监督对话数据，来优化大语言模型的对话能力。在得到了这个优化后模型（sft model）之后，标注者便在给定问题上可以基于模型生成的答案，对回答进行排序，并用排序数据训练一个reward model对回答的结果排序打分，用来评估回答的质量。最后，也是强化学习中最重要的一步，就是用你的“奖励模型”来提升 SFT model的效果。PS：在得到一个sft model之后，如何进一步优化sft model？一种办法是准备更多的“问题回答对“，但这个成本很高，再一个准备的多了，也可能会有价值观等问题，所以干脆训练一个专门的reward model来做这个事儿，用它来对sft model 生成的内容打分，进而继续“微调”sft model。这个很像家长、老师会告诉我们做事的正确答案，但是教的不多，到社会上，没人告诉你对错，只能通过别人的脸色、反应来判断自己做的对错。
-
-[RLHF 为什么不直接对 loss 进行梯度下降来求解？](https://mp.weixin.qq.com/s/Qxue1q9n9q06HLg_ijjqRw)
-
-[大模型对齐技术，各种什么O：PPO,DPO, SimPO,KTO,Step-DPO, MCTS-DPO,SPO](https://mp.weixin.qq.com/s/pE_sSlaGUfKNM9EaBLR-cg) 推荐细读。PS：建议捋一下。
-
-[RLHF通俗理解](https://zhuanlan.zhihu.com/p/685261886) **代码级的理解看这里**。
-
-[小红书基于 PPO 的多模态大模型 RLHF 系统的设计与优化](https://mp.weixin.qq.com/s/klelceFV8750K33htnaj9A) 未细读
 
 ## 演进
 
@@ -216,119 +191,6 @@ PS：base llm对一个prompt 生成batch 个结果（O1,O2,...），基于规则
 2. DPO会整体计算并优化某个response，无法发现具体错误并针对单个step进行独立优化
 3. 基于相对优势：GRPO 算法关注的是组内样本之间的相对优势，而非绝对的奖励值。在一个批次的样本中，它通过比较不同样本的奖励来确定每个样本的相对优劣，以此作为优化策略的依据。这种相对优势的计算可以减少奖励函数的偏差和方差，使训练更加稳定。
 
-||PPO|GRPO|
-|---|---|---|
-|价值网络的使用|依赖于一个与策略模型大小相当的价值网络（critic model）来估计优势函数（advantage function）。这个价值网络需要在每个时间步对状态进行评估，计算复杂度高，内存占用大。|完全摒弃了价值网络，通过组内相对奖励来估计优势函数。|
-|奖励计算方式|使用广义优势估计（GAE）来计算优势函数，需要对每个动作的即时奖励和未来奖励的折扣总和进行估计。|通过采样一组动作并计算它们的奖励值，然后对这些奖励值进行归一化处理，得到相对优势。这种方法更直接，减少了对复杂奖励模型的依赖。|
-|策略更新机制|通过裁剪概率比（clip operation）来限制策略更新的幅度，确保策略分布的变化在可控范围内。|引入了KL散度约束，直接在损失函数中加入KL散度项，从而更精细地控制策略更新的幅度。|
-|计算效率|由于需要维护和更新价值网络，计算效率较低，尤其是在大规模语言模型中，训练过程可能变得非常缓慢。|通过避免价值网络的使用，显著提高了计算效率，降低了内存占用，更适合大规模语言模型的微调。|
-|优势|PPO通过裁剪概率比，能够有效防止策略更新过于剧烈，从而保持训练过程的稳定性。PPO在多种强化学习任务中表现出色，适用于多种类型的环境和任务。|GRPO通过避免价值网络的使用，显著降低了计算和存储需求，提高了训练效率。通过组内相对奖励的计算，GRPO减少了策略更新的方差，确保了更稳定的学习过程。GRPO引入了KL散度约束，能够更精细地控制策略更新的幅度，保持策略分布的稳定性。|
-|局限|在大规模语言模型中，PPO需要维护一个与策略模型大小相当的价值网络，导致显著的内存占用和计算代价。PPO的策略更新依赖于单个动作的奖励值，可能导致较高的方差，影响训练的稳定性。|GRPO需要对每个状态采样一组动作，这在某些情况下可能会增加采样成本。GRPO在某些任务中可能不如PPO表现稳定，尤其是在奖励信号稀疏的情况下。|
-
-![](/public/upload/machine/ppo_grpo.jpg)
-
-A concrete example of GRPO in action:
-
-```
-Query: “What is 2 + 3?”
-
-Step 1: LLM generates three answers.
-1. “5”
-2. “6”
-3. “2 + 3 = 5”
-
-Step 2: Each answer is scored.
-1. “5” → 1 points (correct, no reasoning)
-2. “6” → 0 points (incorrect)
-3. “2 + 3 = 5” → 2 points (correct, w/ reasoning)
-
-Step 3: Compute avg score for entire group.
-Avg score = (1 + 0 + 2) / 3 = 1
-
-Step 4: Compare each answer score to avg.
-1. “5” → 0  (same as avg)
-2. “6” → -1 (below avg)
-3. “2 + 3 = 5” → 1 (above avg)
-
-Step 5: Reinforce LLM to favor higher scores.
-1. Favor responses like #3 (positive)
-2. Maintain responses like #1 (neutral)
-3. Avoid responses like #2 (negative)
-
-This process is repeated, allowing the model to learn and improve over time.
-```
-
-[Coding GRPO from Scratch: A Guide to Distributed Implementation with Qwen2.5-1.5B-Instruct](https://github.com/aburkov/theLMbook/blob/main/GRPO_From_Scratch_Multi_GPU_DataParallel_Qwen_2_5_1_5B_Instruct.ipynb)
-```python
-def correctness_reward(prompts, completions, answer, **kwargs):
-   """
-   Assigns a reward based on the correctness of the model's answer.
-   Explanation:
-       1. Extracts the content from each completion.
-       2. Extracts the answer portion from each response using extract_answer_from_model_output.
-       3. Assigns rewards based on matching criteria:
-          - 2.0 points for an exact match
-          - 1.5 points for numeric equivalence (when values match but format differs)
-          - 0.0 points for incorrect answers
-       4. Tracks completion lengths for analysis.
-   """
-   responses = [completion[0]['content'] for completion in completions]
-   extracted = [extract_answer_from_model_output(r) for r in responses]
-   rewards = []
-   for r, a in zip(extracted, answer):
-       if r == a:  # Exact match case
-           rewards.append(2.0)
-       else:
-           # Try numeric equivalence
-           r_num = extract_single_number(str(r))
-           a_num = extract_single_number(str(a))
-           if r_num is not None and a_num is not None and r_num == a_num:
-               rewards.append(1.5)
-           else:
-               rewards.append(0.0)
-   # Log completion lengths
-   completion_lengths = [len(response.split()) for response in responses]
-   return rewards
-
-def format_reward(completions, **kwargs):
-   """
-   Assigns a reward for adhering to the desired XML format.
-   Explanation:
-       1. Extracts the content from each completion.
-       2. Evaluates format compliance by checking for required XML tags:
-          - 0.2 points for each tag present (<reasoning>, </reasoning>, <answer>, </answer>)
-          - Maximum score of 0.8 for perfect format compliance
-       3. Stores and returns the format compliance scores.
-   """
-   responses = [completion[0]['content'] for completion in completions]
-   rewards = []
-   format_scores = []
-   for response in responses:
-       score = 0.0
-       if "<reasoning>" in response: score += 0.2
-       if "</reasoning>" in response: score += 0.2
-       if "<answer>" in response: score += 0.2
-       if "</answer>" in response: score += 0.2
-       rewards.append(score)
-       format_scores.append(score)
-   return rewards
-```
-
-HuggingFace GRPOTrainer继承自Trainer类，在Trainer类中封装了很多的训练逻辑
-
-```python
-from datasets import load_dataset
-from trl import GRPOTrainer
-dataset = load_dataset("trl-lib/tldr", split="train")
-
-trainer = GRPOTrainer(
-    model="Qwen/Qwen2-0.5B-Instruct",
-    reward_funcs="weqweasdas/RM-Gemma-2B",
-    train_dataset=dataset,
-)
-trainer.train()
-```
-
 ## 案例
 
 [大模型Post-Training总结](https://mp.weixin.qq.com/s/FDe4dz6eMC4QZ1aNoE4vnw)
@@ -349,7 +211,8 @@ trainer.train()
 
 ### 拒绝采样（Rejection Sampling）
 
-核心思想是通过一个已知的、易于采样的提议分布（proposal distribution）来近似目标分布，并通过接受或拒绝样本的机制（基于规则或者reward？），最终得到符合目标分布的样本集。
+通俗解释：是通过一个已知的、易于采样的提议分布（proposal distribution）来近似目标分布，并通过接受或拒绝样本的机制（基于规则或者reward？），最终得到符合目标分布的样本集。比如 想从一个目标分布（每个事件的概率为$\frac{1}{7}$）中采样，但直接实现较为困难。于是，我们从另一个易于采样的分布（单次掷骰子，概率为$\frac{1}{6}$）中生成样本。由于该分布无法完全覆盖目标分布，我们通过扩展它（即掷两次骰子），将样本空间扩大到6*6=36种可能性，从而包含目标分布。接下来，按照某种规则丢弃不符合条件的样本（例如，双六的组合）。对于剩余的样本，我们重新调整概率分布（平均分成7组），使其匹配目标分布。最终，接受的样本可以视为从目标分布中采样得到的。
+
 数学解释：假设我们想从一个复杂的目标分布 p(x)中采样，但直接采样难度很高。我们引入一个辅助分布 q(x)，它满足：
 1. 易采样性，我们可以轻松从 q(x)中生成样本。
 2. 包络条件，存在一个常数 M使得对任意 x，目标分布满足 p(x)≤Mq(x)
@@ -360,10 +223,15 @@ trainer.train()
 3. 生成一个随机数$u∼U(0,1)u$ （从均匀分布中采样）。
 4. 如果 $u≤Paccept(x^∗)u$，接受这个样本；否则拒绝并重新采样。
 
-在 LLM 训练中，拒绝采样（Rejection Sampling）是一种“生成候选样本→筛选有效样本”的过程。通常用于以下场景：
-1. 生成多个候选响应：模型针对给定的提示（prompt）生成多个候选响应。
-2. 使用奖励模型筛选：利用奖励模型（Reward Model, RM）对这些候选响应进行评分，选择得分最高的响应作为高质量样本。
-3. 迭代优化：将筛选出的高质量样本用于进一步训练模型，以逐步提升模型的生成质量。
+[拒绝采样](https://zhuanlan.zhihu.com/p/3907736367)LLM 的拒绝采样操作起来非常简单：让自己的模型针对 prompt 生成多个候选 response，然后用 reward_model 筛选出来高质量的 response （也可以是 pair 对），拿来再次进行训练。
+解剖这个过程：
+1. 提议分布是我们自己的模型，目标分布是最好的语言模型；
+2. prompt + response = 一个采样结果；
+3. do_sample 多次 = 缩放提议分布（也可以理解为扔多次骰子）；
+4. 采样结果得到 reward_model 的认可 = 符合目标分布。
+经过这一番操作，我们能获得很多的训练样本，“这些样本既符合最好的语言模型的说话习惯，又不偏离原始语言模型的表达习惯”，学习它们就能让我们的模型更接近最好的语言模型。
+
+RLHF 的优化目标，并不是获得说话说的最好的模型，而是获得 reward_model 和 reference_model （被优化的模型）共同认可的模型。在 RLHF 的训练框架下，reward_model 认为谁是最好的语言模型，谁就是最好的语言模型，人类的观点并不重要。与此同时，即使 reward_model 告诉了我们最好的语言模型距离当前十公里，但 reference_model 每次只允许我们走两公里，所以 RLHF 需要反复迭代进行。
 
 ## 技术
 

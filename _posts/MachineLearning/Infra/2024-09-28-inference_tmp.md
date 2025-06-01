@@ -11,7 +11,18 @@ keywords: llm vLLM
 * TOC
 {:toc}
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=default"></script>
+<script>
+  MathJax = {
+    tex: {
+      inlineMath: [['$', '$']], // 支持 $和$$ 作为行内公式分隔符
+      displayMath: [['$$', '$$']], // 块级公式分隔符
+    },
+    svg: {
+      fontCache: 'global'
+    }
+  };
+</script>
+<script async src="/public/js/mathjax/es5/tex-mml-chtml.js"></script>
 
 ## 简介
 
@@ -216,3 +227,9 @@ Context Caching
 [AI 推理场景的痛点和解决方案](https://mp.weixin.qq.com/s/SeUJxNK10fhR6YsWSJRYwg) 未细读。
 
 [大模型推理框架RTP-LLM P-D分离之道：从思考到实战](https://mp.weixin.qq.com/s/4FVw5paNSUCeQEUp9hoJ5Q) 未读
+
+## 各种并行
+
+[LightLLM中DeepSeek V3/R1 Two MicroBatch Overlap 实现解析](https://mp.weixin.qq.com/s/V7LmiDRcBiSC0Dfl5jGm3w) 未细读（在代码上体现如何overlap）。在DeepSeek-V3/R1推理系统中，多机多卡的专家并行会引入比较大的通信开销，所以DeepSeek使用了双 batch 重叠来掩盖通信开销，提高整体吞吐。
+
+![](/public/upload/machine/micro_batch_overlap.png)

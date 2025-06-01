@@ -11,7 +11,18 @@ keywords: reason model
 * TOC
 {:toc}
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=default"></script>
+<script>
+  MathJax = {
+    tex: {
+      inlineMath: [['$', '$']], // 支持 $和$$ 作为行内公式分隔符
+      displayMath: [['$$', '$$']], // 块级公式分隔符
+    },
+    svg: {
+      fontCache: 'global'
+    }
+  };
+</script>
+<script async src="/public/js/mathjax/es5/tex-mml-chtml.js"></script>
 
 ## 简介
 
@@ -143,3 +154,5 @@ test-time Compute 可以是很多不同的东西，包括思路链、修改答�
 ## 其它
 
 [作为开发者，我如何提高任务型大模型应用的响应性能](https://mp.weixin.qq.com/s/_4s8HiRASW59V9S0YMRRww) 减少输出token、选择合适尺寸的模型以及采用流式输出。
+
+
